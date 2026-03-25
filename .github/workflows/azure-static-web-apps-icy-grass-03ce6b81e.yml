@@ -21,7 +21,7 @@ jobs:
         run: npm install
 
       - name: Build
-        run: npm run build
+        run: VITE_ANTHROPIC_KEY=${{ secrets.VITE_ANTHROPIC_KEY }} npm run build
 
       - name: Build And Deploy
         id: builddeploy
@@ -31,9 +31,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
           app_location: "/"
-          app_build_command: "npm run build"
           output_location: "dist"
-      
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
