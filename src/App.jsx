@@ -6,7 +6,7 @@ const ANTHROPIC_KEY = "YOUR_ANTHROPIC_API_KEY_HERE";
 // ── Optional: Azure Blob Storage URL for auto-loading fresh data ─────────────
 // After uploading coach-data.json to your golf-app-data container, paste the URL here
 // e.g. "https://golfdatastorage.blob.core.windows.net/golf-app-data/coach-data.json"
-const BLOB_DATA_URL = "https://golfdatastorage.blob.core.windows.net/golf-app-data/coach-data.js";
+const BLOB_DATA_URL = "https://golfdatastorage.blob.core.windows.net/golf-app-data/coach-data.json";
 
 const SYSTEM_PROMPT = `You are an expert PGA-level golf coach with access to LJ's complete Garmin R10 launch monitor data including every individual shot.
 
