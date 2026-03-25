@@ -1,11 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 
-// ── Replace with your Anthropic API key ──────────────────────────────────────
-const ANTHROPIC_KEY = "YOUR_ANTHROPIC_API_KEY_HERE";
-
-// ── Optional: Azure Blob Storage URL for auto-loading fresh data ─────────────
-// After uploading coach-data.json to your golf-app-data container, paste the URL here
-// e.g. "https://golfdatastorage.blob.core.windows.net/golf-app-data/coach-data.json"
+const ANTHROPIC_KEY = "https://golf-coach-kv.vault.azure.net/secrets/ClaudeApiKeyGolfCoach/66bde5e0b0db4c83879ef0d6f9690f5a";
 const BLOB_DATA_URL = "https://golfdatastorage.blob.core.windows.net/golf-app-data/coach-data.json";
 
 const SYSTEM_PROMPT = `You are an expert PGA-level golf coach with access to LJ's complete Garmin R10 launch monitor data including every individual shot.
@@ -38,16 +33,17 @@ const TABS = [
 
 export default function GolfCoach() {
   const [activeTab, setActiveTab] = useState("coach");
-  const [allTime, setAllTime] = useState("");
-  const [lastSession, setLastSession] = useState("");
-  const [shots, setShots] = useState("");
+  const [clubs, setClubs] = useState([]);
+  const [sessionData, setSessionData] = useState([]);
+  const [shotData, setShotData] = useState([]);
+  const [lastUpdated, setLastUpdated] = useState("");
+  const [dataStatus, setDataStatus] = useState("idle");
   const [responses, setResponses] = useState({});
   const [loading, setLoading] = useState(false);
   const [loadingKey, setLoadingKey] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [selectedClub, setSelectedClub] = useState(null);
-  const [dataStatus, setDataStatus] = useState("idle");
   const chatEndRef = useRef(null);
   const isDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
 
@@ -68,50 +64,36 @@ export default function GolfCoach() {
   };
 
   useEffect(() => {
-    if (BLOB_DATA_URL) loadFromBlob();
+    if (BLOB_DATA_URL && BLOB_DATA_URL !== "YOUR_BLOB_URL_HERE") loadFromBlob();
   }, []);
 
   const loadFromBlob = async () => {
     setDataStatus("loading");
     try {
       const res = await fetch(BLOB_DATA_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      if (json.allTime) setAllTime(json.allTime);
-      if (json.lastSession) setLastSession(json.lastSession);
-      if (json.shots) setShots(json.shots);
+      if (json.allTime?.length) setClubs(json.allTime);
+      if (json.lastSession?.length) setSessionData(json.lastSession);
+      if (json.shots?.length) setShotData(json.shots);
+      if (json.lastUpdated) setLastUpdated(json.lastUpdated.split("T")[0]);
       setDataStatus("loaded");
-    } catch {
+    } catch (err) {
+      console.error("Blob load error:", err);
       setDataStatus("error");
     }
   };
 
-  const parseClubs = () => {
-    if (!allTime.trim()) return [];
-    const lines = allTime.trim().split("\n").filter(l => l.trim());
-    if (lines.length < 2) return [];
-    const header = lines[0].split("\t").map(h => h.trim());
-    return lines.slice(1).map(line => {
-      const vals = line.split("\t");
-      const obj = {};
-      header.forEach((h, i) => { obj[h] = vals[i]?.trim() || ""; });
-      return obj;
-    }).filter(c => c.club_name);
-  };
-
-  const clubs = parseClubs();
   const hasData = clubs.length > 0;
-  const totalShots = clubs.reduce((a, c) => a + (parseInt(c.total_shots) || 0), 0);
+  const totalShots = clubs.reduce((a, c) => a + (c.total_shots || 0), 0);
   const driver = clubs.find(c => c.club_name === "Driver");
 
-  const ctx = () => `
-ALL-TIME AVERAGES (${totalShots} total shots):
-${allTime}
+  const objArrToTSV = (arr) => {
+    if (!arr?.length) return "";
+    return Object.keys(arr[0]).join("\t") + "\n" + arr.map(r => Object.values(r).map(v => v ?? "").join("\t")).join("\n");
+  };
 
-LAST SESSION BREAKDOWN:
-${lastSession}
-
-INDIVIDUAL SHOT DATA (every shot on record):
-${shots}`.trim();
+  const ctx = () => `ALL-TIME AVERAGES (${totalShots} total shots):\n${objArrToTSV(clubs)}\n\nLAST SESSION:\n${objArrToTSV(sessionData)}\n\nINDIVIDUAL SHOTS:\n${objArrToTSV(shotData)}`;
 
   const callClaude = async (prompt, key) => {
     setLoading(true);
@@ -121,7 +103,7 @@ ${shots}`.trim();
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": "https://golf-coach-kv.vault.azure.net/secrets/ClaudeApiKeyGolfCoach/66bde5e0b0db4c83879ef0d6f9690f5a",
+          "x-api-key": ANTHROPIC_KEY,
           "anthropic-version": "2023-06-01",
           "anthropic-dangerous-direct-browser-access": "true"
         },
@@ -145,26 +127,15 @@ ${shots}`.trim();
     }
   };
 
-  const getAnalysis = () => callClaude(
-    `Give me a comprehensive analysis of my golf game using ALL available data including individual shots.\n\n${ctx()}\n\nCover: overall assessment, top 3 priority fixes with specific drills, what I'm doing well, distance gaps vs ideal benchmarks, consistency patterns across sessions.`,
-    "analysis"
-  );
-
-  const getSession = () => callClaude(
-    `Detailed breakdown of my last session. Use the individual shot data to find patterns within the session.\n\n${ctx()}\n\nAnalyze: how each club performed vs all-time average, did I improve or decline within the session, best and worst shots and what made them different, key metrics like spin axis, face to path, tempo.`,
-    "session"
-  );
-
-  const getWarmup = () => callClaude(
-    `Create a personalized 15-20 min pre-round warm up routine based on my specific weaknesses from the data.\n\n${ctx()}\n\nStructure: 1) Physical 5min 2) Short game 5min 3) Irons 5min 4) Driver 5min. Be specific to my tendencies.`,
-    "warmup"
-  );
+  const getAnalysis = () => callClaude(`Comprehensive analysis of my golf game.\n\n${ctx()}\n\nTop 3 fixes with drills, strengths, distance gaps vs ideal, consistency patterns.`, "analysis");
+  const getSession = () => callClaude(`Detailed last session breakdown using individual shot data.\n\n${ctx()}\n\nEach club vs all-time, best/worst shots, spin axis, face to path, tempo trends.`, "session");
+  const getWarmup = () => callClaude(`Personalized 15-20 min pre-round routine.\n\n${ctx()}\n\n1) Physical 5min 2) Short game 5min 3) Irons 5min 4) Driver 5min`, "warmup");
 
   const getClubAdvice = (club) => {
     setSelectedClub(club.club_name);
-    const clubShots = shots.split("\n").filter(l => l.includes(club.club_name));
+    const clubShots = shotData.filter(s => s.club_name === club.club_name);
     callClaude(
-      `Deep dive analysis for my ${club.club_name} (${club.brand_model || ""}).\n\nALL-TIME STATS:\n${JSON.stringify(club)}\n\nINDIVIDUAL SHOTS WITH THIS CLUB:\n${clubShots.join("\n")}\n\nAnalyze: smash factor trend, spin rate vs ideal, attack angle, face to path, spin axis (draw/fade tendency), tempo, best vs worst shots and what differed. Give 3 specific drills.`,
+      `Deep dive for ${club.club_name} (${club.brand_model || ""}).\n\nALL-TIME: ${JSON.stringify(club)}\n\n${clubShots.length} SHOTS:\n${objArrToTSV(clubShots)}\n\nSmash trend, spin vs ideal, attack angle, face to path, spin axis, best vs worst shots. 3 drills.`,
       `club_${club.club_name}`
     );
   };
@@ -189,10 +160,7 @@ ${shots}`.trim();
           model: "claude-sonnet-4-20250514",
           max_tokens: 1024,
           system: SYSTEM_PROMPT,
-          messages: [
-            ...msgs.slice(0, -1),
-            { role: "user", content: `${msg}\n\nMy complete data:\n${ctx()}` }
-          ]
+          messages: [...msgs.slice(0, -1), { role: "user", content: `${msg}\n\n${ctx()}` }]
         })
       });
       const data = await res.json();
@@ -216,9 +184,7 @@ ${shots}`.trim();
   const pct = (v, ideal) => Math.min(100, Math.round((parseFloat(v) / parseFloat(ideal)) * 100)) || 0;
 
   const Card = ({ children, style = {} }) => (
-    <div style={{ background: C.card, borderRadius: 16, overflow: "hidden", marginBottom: 12, ...style }}>
-      {children}
-    </div>
+    <div style={{ background: C.card, borderRadius: 16, overflow: "hidden", marginBottom: 12, ...style }}>{children}</div>
   );
 
   const PrimaryBtn = ({ onClick, disabled, label, isLoading }) => (
@@ -229,54 +195,56 @@ ${shots}`.trim();
   );
 
   const ResponseBubble = ({ text }) => (
-    <div style={{ background: C.card, borderRadius: 16, padding: 16, fontSize: 15, lineHeight: 1.75, whiteSpace: "pre-wrap", color: C.text, marginTop: 12 }}>
-      {text}
-    </div>
+    <div style={{ background: C.card, borderRadius: 16, padding: 16, fontSize: 15, lineHeight: 1.75, whiteSpace: "pre-wrap", color: C.text, marginTop: 12 }}>{text}</div>
   );
 
   const NoData = () => (
     <div style={{ textAlign: "center", padding: "48px 24px" }}>
       <div style={{ fontSize: 48, marginBottom: 16 }}>⛳</div>
-      <div style={{ fontSize: 17, fontWeight: 600, color: C.text, marginBottom: 8 }}>No data loaded</div>
-      <div style={{ fontSize: 15, color: C.textSec, marginBottom: 24 }}>Paste your SQL data in the Data tab</div>
-      <button onClick={() => setActiveTab("data")} style={{ padding: "12px 24px", fontSize: 15, fontWeight: 600, borderRadius: 12, border: "none", background: C.greenMid, color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>Load Data</button>
+      <div style={{ fontSize: 17, fontWeight: 600, color: C.text, marginBottom: 8 }}>
+        {dataStatus === "loading" ? "Loading your data..." : dataStatus === "error" ? "Could not load data" : "No data loaded"}
+      </div>
+      <div style={{ fontSize: 15, color: C.textSec, marginBottom: 24 }}>
+        {dataStatus === "error" ? "Check CORS settings in Azure Blob Storage" : "Loading from Azure Blob Storage..."}
+      </div>
+      <button onClick={loadFromBlob} style={{ padding: "12px 24px", fontSize: 15, fontWeight: 600, borderRadius: 12, border: "none", background: C.greenMid, color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>
+        {dataStatus === "loading" ? "Loading..." : "Retry ↺"}
+      </button>
     </div>
   );
 
   const quickQs = [
-    "What was my best drive vs worst drive in my last session — what made them different?",
-    "Which session was my best overall and why?",
-    "What does my spin axis tell you about my ball flight tendencies?",
+    "Best drive vs worst drive last session — what was different?",
+    "Which session was my best overall?",
+    "What does my spin axis say about my ball flight?",
     "Do I hit better at the start or end of a session?",
-    "Which club has improved the most over time?",
-    "What's causing my driver distance to vary so much?",
-    "Compare my 7 iron to my 5 iron — which is more consistent?",
-    "What should I focus on in my next practice session?",
+    "Which club improved the most over time?",
+    "Why does my driver distance vary so much?",
+    "Compare my 7 iron to my 5 iron",
+    "What should I focus on next practice?",
   ];
 
   return (
     <div style={{ fontFamily: "-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif", maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: C.bg, color: C.text, paddingBottom: 90 }}>
 
-      {/* Header */}
       <div style={{ padding: "16px 20px 12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8 }}>
           <div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.8px" }}>Golf Coach</div>
-            <div style={{ fontSize: 13, color: C.textSec, marginTop: 1 }}>Garmin R10 · LJ</div>
+            <div style={{ fontSize: 13, color: C.textSec, marginTop: 1 }}>Garmin R10 · LJ {lastUpdated ? `· ${lastUpdated}` : ""}</div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: "-1px" }}>{hasData ? totalShots.toLocaleString() : "—"}</div>
             <div style={{ fontSize: 12, color: C.textSec }}>total shots</div>
           </div>
         </div>
-
         {hasData && (
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
             {[
-              { label: "Driver carry", value: driver?.avg_carry ? `${driver.avg_carry}y` : "—", sub: "avg" },
+              { label: "Driver", value: driver?.avg_carry ? `${driver.avg_carry}y` : "—", sub: "avg carry" },
               { label: "Best smash", value: clubs.length ? Math.max(...clubs.map(c => parseFloat(c.avg_smash_factor) || 0)).toFixed(3) : "—", sub: "factor" },
               { label: "Clubs", value: clubs.length, sub: "tracked" },
-              { label: "Shot data", value: shots.trim() ? `${shots.split("\n").filter(l => l.trim()).length - 1}` : "—", sub: "rows" },
+              { label: "Shots", value: shotData.length.toLocaleString(), sub: "on record" },
             ].map((m, i) => (
               <div key={i} style={{ flexShrink: 0, background: C.card, borderRadius: 14, padding: "10px 14px", minWidth: 80, textAlign: "center" }}>
                 <div style={{ fontSize: 11, color: C.textSec, marginBottom: 2, fontWeight: 500 }}>{m.label}</div>
@@ -290,7 +258,6 @@ ${shots}`.trim();
 
       <div style={{ padding: "4px 16px 0" }}>
 
-        {/* OVERVIEW TAB */}
         {activeTab === "coach" && (
           <div>
             {!hasData ? <NoData /> : (
@@ -326,22 +293,13 @@ ${shots}`.trim();
           </div>
         )}
 
-        {/* SESSION TAB */}
         {activeTab === "session" && (
           <div>
             {!hasData ? <NoData /> : (
               <>
-                {lastSession && (() => {
-                  const lines = lastSession.trim().split("\n");
-                  const header = lines[0]?.split("\t").map(h => h.trim()) || [];
-                  const rows = lines.slice(1).filter(l => l.trim()).map(l => {
-                    const vals = l.split("\t");
-                    const obj = {};
-                    header.forEach((h, i) => { obj[h] = vals[i]?.trim() || ""; });
-                    return obj;
-                  }).filter(r => r.club_name);
-                  const date = rows[0]?.session_date;
-                  const temp = rows[0]?.temperature_f ? `${parseFloat(rows[0].temperature_f).toFixed(0)}°F` : "";
+                {sessionData.length > 0 && (() => {
+                  const date = sessionData[0]?.session_date || "";
+                  const temp = sessionData[0]?.temperature_f ? `${parseFloat(sessionData[0].temperature_f).toFixed(0)}°F` : "";
                   return (
                     <>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingLeft: 4 }}>
@@ -349,12 +307,12 @@ ${shots}`.trim();
                         <div style={{ fontSize: 13, color: C.textSec }}>{date} {temp}</div>
                       </div>
                       <Card>
-                        {rows.map((row, i) => {
+                        {sessionData.map((row, i) => {
                           const diff = parseFloat(row.carry_vs_alltime);
                           const diffColor = diff > 0 ? C.greenText : diff < 0 ? C.red : C.textSec;
                           const diffStr = isNaN(diff) ? "" : diff > 0 ? `+${diff}y` : `${diff}y`;
                           return (
-                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 16px", borderBottom: i < rows.length - 1 ? `0.5px solid ${C.sep}` : "none" }}>
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 16px", borderBottom: i < sessionData.length - 1 ? `0.5px solid ${C.sep}` : "none" }}>
                               <div>
                                 <div style={{ fontSize: 15, fontWeight: 500 }}>{row.club_name}</div>
                                 <div style={{ fontSize: 12, color: C.textSec, marginTop: 1 }}>{row.total_shots} shots · {row.avg_smash_factor} smash</div>
@@ -377,7 +335,6 @@ ${shots}`.trim();
           </div>
         )}
 
-        {/* CLUBS TAB */}
         {activeTab === "clubs" && (
           <div>
             {!hasData ? <NoData /> : (
@@ -410,7 +367,6 @@ ${shots}`.trim();
           </div>
         )}
 
-        {/* WARMUP TAB */}
         {activeTab === "warmup" && (
           <div>
             {!hasData ? <NoData /> : (
@@ -418,7 +374,7 @@ ${shots}`.trim();
                 <Card style={{ marginBottom: 16 }}>
                   <div style={{ padding: 16 }}>
                     <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>Pre-round routine</div>
-                    <div style={{ fontSize: 15, color: C.textSec, lineHeight: 1.6 }}>A personalized 15–20 min warm up built around your specific swing tendencies.</div>
+                    <div style={{ fontSize: 15, color: C.textSec, lineHeight: 1.6 }}>A personalized 15–20 min warm up built around your specific tendencies.</div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: C.sep }}>
                     {[["Physical", "5 min"], ["Short game", "5 min"], ["Irons", "5 min"], ["Driver", "5 min"]].map(([l, t], i) => (
@@ -436,7 +392,6 @@ ${shots}`.trim();
           </div>
         )}
 
-        {/* CHAT TAB */}
         {activeTab === "chat" && (
           <div>
             {!hasData ? <NoData /> : (
@@ -483,62 +438,47 @@ ${shots}`.trim();
           </div>
         )}
 
-        {/* DATA TAB */}
         {activeTab === "data" && (
           <div>
-            {BLOB_DATA_URL && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, borderRadius: 12, padding: "12px 16px", marginBottom: 12 }}>
-                <div style={{ fontSize: 14, color: C.text }}>Auto-sync from Azure</div>
-                <button onClick={loadFromBlob} style={{ fontSize: 13, padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${C.border}`, background: "none", color: C.greenText, cursor: "pointer", fontFamily: "inherit" }}>
-                  {dataStatus === "loading" ? "Loading..." : "Refresh ↺"}
-                </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, borderRadius: 12, padding: "12px 16px", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>Auto-sync from Azure</div>
+                {lastUpdated && <div style={{ fontSize: 12, color: C.textSec }}>Last updated {lastUpdated}</div>}
               </div>
-            )}
-
-            <Card>
-              <div style={{ padding: "14px 16px 8px" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.greenText, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>How to update your data</div>
-                <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.7 }}>Run these queries in Azure Portal → Query Editor and paste results below:</div>
-              </div>
-              {[
-                { label: "All-time summary", q: "SELECT * FROM golf.vw_AllTimeSummary ORDER BY ideal_carry_distance DESC" },
-                { label: "Last session", q: "SELECT * FROM golf.vw_LastSessionSummary ORDER BY avg_carry DESC" },
-                { label: "Shot-level data", q: "SELECT s.shot_id, s.session_id, se.session_date, c.club_name, c.brand_model, s.recorded_at, s.carry_distance_yds, s.ball_speed_mph, s.club_speed_mph, s.smash_factor, s.launch_angle_deg, s.attack_angle_deg, s.club_path_deg, s.club_face_deg, s.face_to_path_deg, s.spin_rate_rpm, s.spin_axis_deg, s.carry_deviation_distance_yds, s.swing_tempo FROM golf.Shots s JOIN golf.Clubs c ON s.club_id = c.club_id JOIN golf.Sessions se ON s.session_id = se.session_id ORDER BY s.session_id DESC, s.recorded_at ASC" },
-              ].map((item, idx) => (
-                <div key={idx} style={{ padding: "10px 16px", borderTop: `0.5px solid ${C.sep}` }}>
-                  <div style={{ fontSize: 11, color: C.textTer, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{item.label}</div>
-                  <code style={{ fontSize: 10, color: C.greenText, lineHeight: 1.5, display: "block", wordBreak: "break-all" }}>{item.q}</code>
-                </div>
-              ))}
-            </Card>
-
-            {[
-              { label: "All-time summary", val: allTime, set: setAllTime, rows: 3 },
-              { label: "Last session", val: lastSession, set: setLastSession, rows: 2 },
-              { label: "Shot-level data", val: shots, set: setShots, rows: 2, hint: "Paste full shot data here for best vs worst analysis" },
-            ].map((field, i) => (
-              <div key={i} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, paddingLeft: 4 }}>
-                  {field.label} {field.val.trim() ? "✓" : ""}
-                </div>
-                {field.hint && <div style={{ fontSize: 12, color: C.textSec, marginBottom: 6, paddingLeft: 4 }}>{field.hint}</div>}
-                <textarea value={field.val} onChange={e => field.set(e.target.value)}
-                  placeholder={`Paste ${field.label.toLowerCase()} results here...`}
-                  style={{ width: "100%", height: field.rows === 3 ? 120 : 80, padding: "12px 14px", fontSize: 11, fontFamily: "SF Mono, Menlo, monospace", resize: "vertical", boxSizing: "border-box", borderRadius: 14, border: `0.5px solid ${C.border}`, background: C.card, color: C.text, outline: "none" }} />
-              </div>
-            ))}
-
-            {hasData && (
-              <button onClick={() => setActiveTab("coach")}
-                style={{ width: "100%", padding: 14, fontSize: 15, fontWeight: 600, cursor: "pointer", borderRadius: 12, border: "none", background: C.greenMid, color: "#fff", fontFamily: "inherit" }}>
-                Start coaching ↗
+              <button onClick={loadFromBlob} style={{ fontSize: 13, padding: "6px 14px", borderRadius: 8, border: `0.5px solid ${C.border}`, background: "none", color: C.greenText, cursor: "pointer", fontFamily: "inherit" }}>
+                {dataStatus === "loading" ? "Loading..." : "Refresh ↺"}
               </button>
+            </div>
+            {hasData && (
+              <Card>
+                {[
+                  { label: "All-time clubs", value: clubs.length },
+                  { label: "Last session clubs", value: sessionData.length },
+                  { label: "Individual shots", value: shotData.length.toLocaleString() },
+                  { label: "Total shots (avg)", value: totalShots.toLocaleString() },
+                ].map((row, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderBottom: i < 3 ? `0.5px solid ${C.sep}` : "none" }}>
+                    <span style={{ fontSize: 14, color: C.textSec }}>{row.label}</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: C.greenText }}>{row.value}</span>
+                  </div>
+                ))}
+              </Card>
             )}
+            <Card>
+              <div style={{ padding: "14px 16px" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.greenText, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>To update after a new session</div>
+                <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.9 }}>
+                  1. Save alltime.txt, lastsession.txt, shots.txt from Azure Query Editor{"\n"}
+                  2. Run: <code style={{ background: C.card2, padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>node generate-coach-data.cjs</code>{"\n"}
+                  3. Upload coach-data.json to golf-app-data container{"\n"}
+                  4. Tap Refresh ↺ above
+                </div>
+              </div>
+            </Card>
           </div>
         )}
       </div>
 
-      {/* Tab Bar */}
       <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: isDark ? "rgba(12,12,14,0.9)" : "rgba(242,242,247,0.9)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", borderTop: `0.5px solid ${C.sep}`, display: "flex", padding: "10px 0 18px", zIndex: 100 }}>
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
