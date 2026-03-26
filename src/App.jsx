@@ -93,8 +93,7 @@ export default function GolfCoach() {
     return Object.keys(arr[0]).join("\t") + "\n" + arr.map(r => Object.values(r).map(v => v ?? "").join("\t")).join("\n");
   };
 
-  const ctx = () => `ALL-TIME AVERAGES (${totalShots} total shots):\n${objArrToTSV(clubs)}\n\nLAST SESSION:\n${objArrToTSV(sessionData)}\n\nINDIVIDUAL SHOTS:\n${objArrToTSV(shotData)}`;
-
+const ctx = () => `ALL-TIME AVERAGES (${totalShots} total shots):\n${objArrToTSV(clubs)}\n\nLAST SESSION:\n${objArrToTSV(sessionData)}\n\nINDIVIDUAL SHOTS (most recent 150):\n${objArrToTSV(shotData.slice(0, 150))}`;
   const callClaude = async (prompt, key) => {
     setLoading(true);
     setLoadingKey(key);
