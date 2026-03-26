@@ -17,12 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: VITE_ANTHROPIC_KEY=${{ secrets.VITE_ANTHROPIC_KEY }} npm run build
-
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
@@ -32,6 +26,8 @@ jobs:
           action: "upload"
           app_location: "/"
           output_location: "dist"
+        env:
+          VITE_ANTHROPIC_KEY: ${{ secrets.VITE_ANTHROPIC_KEY }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
