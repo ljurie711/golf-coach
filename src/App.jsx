@@ -106,7 +106,7 @@ const ctx = () => `ALL-TIME AVERAGES (${totalShots} total shots):\n${objArrToTSV
           "anthropic-dangerous-direct-browser-access": "true"
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5",
           max_tokens: 1024,
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: prompt }]
@@ -155,7 +155,7 @@ const ctx = () => `ALL-TIME AVERAGES (${totalShots} total shots):\n${objArrToTSV
           "anthropic-dangerous-direct-browser-access": "true"
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5",
           max_tokens: 1024,
           system: SYSTEM_PROMPT,
           messages: [...msgs.slice(0, -1), { role: "user", content: `${msg}\n\n${ctx()}` }]
