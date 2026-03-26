@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 
-const ANTHROPIC_KEY = "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";
+const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY;
 const BLOB_DATA_URL = "https://golfdatastorage.blob.core.windows.net/golf-app-data/coach-data.json";
 
 const SYSTEM_PROMPT = `You are an expert PGA-level golf coach with access to LJ's complete Garmin R10 launch monitor data including every individual shot.
