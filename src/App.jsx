@@ -70,7 +70,9 @@ export default function GolfCoach() {
   const loadFromBlob = async () => {
     setDataStatus("loading");
     try {
-      const res = await fetch(BLOB_DATA_URL);
+      // Add a cache-busting query string to always fetch the latest data
+      const url = BLOB_DATA_URL + "?t=" + Date.now();
+      const res = await fetch(url, { cache: "reload" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (json.allTime?.length) setClubs(json.allTime);
